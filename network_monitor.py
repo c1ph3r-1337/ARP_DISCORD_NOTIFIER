@@ -3,16 +3,22 @@ import requests
 import json
 import os
 
-# Configuration - Replace these with your values
-SUBNET = "192.168.1.0/24"  # Your network subnet (e.g., 192.168.1.0/24)
-WEBHOOK_URL = "my_weekhook_url" 
+# Configuration - Replace these with your actual values
+SUBNET = "192.168.1.0/24"  # Example: 192.168.1.0/24
+WEBHOOK_URL = "https://discord.com/api/webhooks/your_webhook_here"  # Replace with your actual webhook URL
 PREV_FILE = "previous_devices.json"
 
 def scan_network(subnet):
     """Scan the network using ARP requests and return a list of devices (IP and MAC)."""
-    ans, _ = scapy.arping(subnet, verbose=0)
-    devices = [{'ip': received.psrc, 'mac': received.hwsrc} for sent, received in ans]
-    return devices
+    try:
+        ans, _ = scapy.arping(subnet, verbose=0)
+        devices = []
+        for sent, received in ans:
+            devices.append({'ip': received.psrc, 'mac': received.hwsrc.lower()})
+        return devices
+    except Exception as e:
+        print(f"Error during network scan: {e}")
+        return []
 
 def check_new_devices(current_devices, previous_devices):
     """Check for devices that are new since the last scan."""
@@ -29,24 +35,39 @@ def check_arp_spoofing(devices):
         if mac not in mac_to_ips:
             mac_to_ips[mac] = []
         mac_to_ips[mac].append(ip)
+
     suspicious = {mac: ips for mac, ips in mac_to_ips.items() if len(ips) > 1}
     return suspicious
 
 def send_discord_notification(message):
     """Send a notification message to Discord via webhook."""
     payload = {'content': message}
-    response = requests.post(WEBHOOK_URL, json=payload)
-    if response.status_code != 204:
-        print(f"Failed to send notification: {response.status_code}")
+    try:
+        response = requests.post(WEBHOOK_URL, json=payload)
+        if response.status_code != 200 and response.status_code != 204:
+            print(f"Failed to send notification: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f"Error sending Discord notification: {e}")
+
+def load_previous_devices():
+    """Load previous devices from JSON file, handling empty or invalid files."""
+    if os.path.exists(PREV_FILE):
+        try:
+            with open(PREV_FILE, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print(f"Warning: {PREV_FILE} is corrupted. Starting fresh.")
+            return []
+    return []
+
+def save_current_devices(devices):
+    """Save current device list to JSON file."""
+    with open(PREV_FILE, 'w') as f:
+        json.dump(devices, f, indent=2)
 
 def main():
     """Main function to run the network monitoring script."""
-    # Load previous devices from file if it exists
-    if os.path.exists(PREV_FILE):
-        with open(PREV_FILE, 'r') as f:
-            previous_devices = json.load(f)
-    else:
-        previous_devices = []
+    previous_devices = load_previous_devices()
 
     # Scan the network
     current_devices = scan_network(SUBNET)
@@ -54,19 +75,18 @@ def main():
     # Check for new devices and send notifications
     new_devices = check_new_devices(current_devices, previous_devices)
     for device in new_devices:
-        message = f"Device connected: IP {device['ip']} MAC {device['mac']}"
+        message = f"🔔 New Device Detected: IP `{device['ip']}`, MAC `{device['mac']}`"
         send_discord_notification(message)
 
     # Check for potential ARP spoofing and send notifications
     suspicious = check_arp_spoofing(current_devices)
     for mac, ips in suspicious.items():
         ips_str = ", ".join(ips)
-        message = f"Potential ARP spoofing detected: MAC {mac} with IPs {ips_str}"
+        message = f"⚠️ Potential ARP Spoofing Detected! MAC `{mac}` is using IPs: {ips_str}"
         send_discord_notification(message)
 
-    # Save current devices to file for the next run
-    with open(PREV_FILE, 'w') as f:
-        json.dump(current_devices, f)
+    # Save current devices for next run
+    save_current_devices(current_devices)
 
 if __name__ == "__main__":
     main()
