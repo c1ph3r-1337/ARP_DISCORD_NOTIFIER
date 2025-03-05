@@ -5,7 +5,7 @@ import os
 
 # Configuration - Replace these with your actual values
 SUBNET = "192.168.1.0/24"  # Example: 192.168.1.0/24
-WEBHOOK_URL = "https://discord.com/api/webhooks/your_webhook_here"  # Replace with your actual webhook URL
+WEBHOOK_URL = "web_hook_url"  # Replace with your actual webhook URL
 PREV_FILE = "previous_devices.json"
 
 def scan_network(subnet):
