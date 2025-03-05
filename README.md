@@ -1,5 +1,5 @@
 
-```markdown
+
 # Network Monitor & ARP Spoofing Detector
 
 This project is a Python-based **network monitoring script** that scans your local network for connected devices, detects new devices, and checks for potential **ARP spoofing attacks**. It also sends notifications to a configured **Discord Webhook** if any new devices are detected or suspicious activity is found.
