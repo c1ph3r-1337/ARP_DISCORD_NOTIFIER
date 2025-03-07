@@ -12,6 +12,8 @@ This project is a Python-based **network monitoring script** that scans your loc
 ✅ Sends real-time **Discord notifications** for ARP table updates and spoofing alerts  
 ✅ Supports both Windows and Linux/macOS ARP output formats
 
+![Screenshot 2025-03-08 021159](https://github.com/user-attachments/assets/4b555f88-8ef7-43d3-9c08-996333475ad9)
+
 ---
 
 ## 🛠️ Requirements
@@ -76,8 +78,6 @@ You can also set this up as a cron job (Linux) or Task Scheduler job (Windows) f
 ---
 
 ## 🔔 Example Notifications
-
-![Screenshot 2025-03-08 021159](https://github.com/user-attachments/assets/4b555f88-8ef7-43d3-9c08-996333475ad9)
 
 **ARP Table Notification:**
 
