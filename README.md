@@ -77,6 +77,8 @@ You can also set this up as a cron job (Linux) or Task Scheduler job (Windows) f
 
 ## 🔔 Example Notifications
 
+![Screenshot 2025-03-08 021159](https://github.com/user-attachments/assets/4b555f88-8ef7-43d3-9c08-996333475ad9)
+
 **ARP Table Notification:**
 
 ```
