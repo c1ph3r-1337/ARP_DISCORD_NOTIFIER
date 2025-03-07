@@ -1,92 +1,118 @@
-# ARP Monitor and Spoofing Detector
+# Network Monitor & ARP Spoofing Detector
 
-This Python script periodically runs `arp -a` to collect ARP (Address Resolution Protocol) information on your local network. It then filters for devices within a specific subnet (by default `192.168.1.x`), checks for possible ARP spoofing by comparing each device’s MAC address to your gateway’s MAC address, and sends the results (plus any alerts) to a **Discord webhook**.
+This project is a Python-based **network monitoring script** that scans your local network for connected devices and checks for potential **ARP spoofing attacks**. It sends notifications to a configured **Discord Webhook** if any suspicious activity is detected.
 
-## Features
+---
 
-- **Automated ARP Collection:** Runs `arp -a` at a fixed interval to gather IP/MAC mappings.  
-- **Subnet Filtering:** Only displays entries for the specified subnet (default `192.168.1.`).  
-- **ARP Spoofing Detection:** Compares each IP’s MAC address to the gateway’s MAC. If another IP has the same MAC, an alert is triggered.  
-- **Discord Notifications:** Posts the ARP table (and any alerts) to a configured Discord channel via a webhook.  
+## 🚀 Features
 
-## How It Works
+✅ Scans your local network for devices (IP and MAC addresses) using `arp -a`  
+✅ Filters results for a specified subnet (default: `192.168.1.x`)  
+✅ Detects potential **ARP spoofing** by identifying when multiple IPs share the same MAC as the gateway (default: `192.168.1.1`)  
+✅ Sends real-time **Discord notifications** for ARP table updates and spoofing alerts  
+✅ Supports both Windows and Linux/macOS ARP output formats
 
-1. **Collect ARP Table:** The script executes `arp -a` using `subprocess.run`.  
-2. **Parse Entries:** It parses both **Windows**-style (`192.168.1.10 00-50-56-c0-00-08 dynamic`) and **Linux/macOS**-style (`? (192.168.1.1) at 58:11:22:e0:67:4f [ether] on eth0`) ARP output using regular expressions.  
-3. **Filter by Subnet:** Only keeps ARP entries whose IP starts with the configured `SUBNET_PREFIX` (e.g., `192.168.1.`).  
-4. **Check for Spoofing:**  
-   - Looks up the gateway’s IP (e.g., `192.168.1.1`) in the ARP table to find its MAC address.  
-   - Compares all other IPs’ MAC addresses. If any match the gateway’s MAC, it flags a **possible ARP spoof**.  
-5. **Send to Discord:** Formats the ARP entries and sends them to a Discord webhook as a code block. If spoofing is detected, an alert message is appended.  
-6. **Repeat at Interval:** Waits `SCAN_INTERVAL` seconds (default 60) and repeats.
+---
 
-## Requirements
+## 🛠️ Requirements
 
-- **Python 3**  
-- **Requests Library:** Install with `pip install requests`.  
-- **Ability to Run `arp -a`:** Typically works out-of-the-box on Windows, Linux, and macOS.
+To run this script, you need:
 
-## Configuration
+- **Python 3.x**
 
-Edit the following variables at the top of the script to suit your environment:
+- Required Python packages:
+  - `requests`
 
-```python
-WEBHOOK_URL = "https://discord.com/api/webhooks/REPLACE_ME"  # Replace with your actual webhook URL
-SUBNET_PREFIX = "192.168.1."                                 # Subnet prefix to monitor
-GATEWAY_IP = "192.168.1.1"                                   # Gateway IP to compare for spoofing checks
-SCAN_INTERVAL = 60                                           # Seconds between scans
+You can install the required package using:
+
+```bash
+pip install requests
 ```
 
-- **WEBHOOK_URL:** Your Discord channel’s webhook URL.  
-- **SUBNET_PREFIX:** The subnet you want to monitor.  
-- **GATEWAY_IP:** The default gateway (router) IP address on your LAN.  
-- **SCAN_INTERVAL:** How often (in seconds) to run the ARP scan and post to Discord.
+---
 
-## Usage
+## ⚙️ Configuration
 
-1. **Clone or Download** this script to your local machine or server.  
-2. **Install Dependencies:**  
-   ```bash
-   pip install requests
+1. **Subnet Filtering**  
+   Edit the `SUBNET_PREFIX` variable in the script to match your network. For example:
+
+   ```python
+   SUBNET_PREFIX = "192.168.1."
    ```
-3. **Configure** the variables in the script (`WEBHOOK_URL`, `SUBNET_PREFIX`, etc.).  
-4. **Run the Script:**  
-   ```bash
-   python arp_monitor.py
+
+2. **Gateway IP**  
+   Set the `GATEWAY_IP` variable to your network's gateway IP address for spoofing checks:
+
+   ```python
+   GATEWAY_IP = "192.168.1.1"
    ```
-5. **Check Discord:** You should see messages containing the filtered ARP table and any spoofing alerts.
 
-## Example Output
+3. **Discord Webhook URL**  
+   Replace the `WEBHOOK_URL` variable with your actual Discord Webhook URL:
 
-A typical Discord message might look like:
+   ```python
+   WEBHOOK_URL = "https://discord.com/api/webhooks/your_webhook_here"
+   ```
+
+4. **Scan Interval**  
+   Modify the `SCAN_INTERVAL` variable to adjust how frequently the script scans the network (in seconds):
+
+   ```python
+   SCAN_INTERVAL = 60
+   ```
+
+---
+
+## ▶️ Usage
+
+Run the script directly from the command line:
+
+```bash
+python network_monitor.py
+```
+
+You can also set this up as a cron job (Linux) or Task Scheduler job (Windows) for continuous monitoring.
+
+---
+
+## 🔔 Example Notifications
+
+**ARP Table Notification:**
 
 ```
 📋 **ARP Table (192.168.1.0/24):**
-```
-```
 Interface: 192.168.1.10 --- 0x13
 192.168.1.1          58-11-22-e0-67-4f     dynamic
 192.168.1.100        00-50-56-c0-00-08     dynamic
 ```
+
+**ARP Spoofing Alert:**
+
 ```
-**🔔ALERT: Possible ARP spoofing detected!** Another IP shares the same MAC as the gateway.
+🔔 ALERT: Possible ARP spoofing detected!
+Another IP shares the same MAC as the gateway.
 ```
 
-## Notes & Caveats
+---
 
-- **Local Network Only:** ARP scans only reveal devices on the same local subnet (broadcast domain).  
-- **ARP Table Expiration:** If a device is not actively communicating, it may not appear in the ARP table.  
-- **Permission:** Always ensure you have permission to monitor and scan the network.  
-- **Platform Differences:** The script tries to parse both Windows and Linux/macOS formats, but if your system outputs ARP data in a different format, you may need to adjust the regular expressions.
+## ⚠️ Security Note
 
-## Contributing
+This is a basic detection script and may produce false positives in environments with:
 
-Feel free to open issues or submit pull requests for improvements, such as:
+- Load balancers  
+- VPN gateways  
+- Misconfigured DHCP servers  
 
-- Additional spoofing checks or security features.  
-- Enhanced platform compatibility.  
-- Improved parsing for edge cases.
+Use this as an early warning tool — not a comprehensive security system.
 
-## License
+---
 
-This script is provided as-is, with no warranty. Use at your own risk. You are free to modify and distribute it as needed.
+## 📄 License
+
+This project is licensed under the MIT License.
+
+---
+
+## 👤 Author
+
+Created with 💻 by c!ph3r1337
