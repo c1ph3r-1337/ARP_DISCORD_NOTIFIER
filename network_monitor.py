@@ -2,12 +2,11 @@ import subprocess
 import time
 import re
 import requests
+from datetime import datetime
 
 # Configuration
 WEBHOOK_URL = "webhook_url"  # Replace with your actual webhook URL
-SUBNET_PREFIX = "192.168.1."
-GATEWAY_IP = "192.168.1.1"  # IP to compare for spoofing checks
-SCAN_INTERVAL = 60          # Seconds between scans
+SUBNET_PREFIX = "192.168.1."  # This filters for 192.168.1.0/24
 
 def get_arp_table():
     """
@@ -20,116 +19,71 @@ def get_arp_table():
         print("Error executing arp -a:", e)
         return ""
 
-def parse_arp_entries(arp_output):
+def parse_arp_table(output, subnet_prefix=SUBNET_PREFIX):
     """
-    Parse the ARP table output from 'arp -a' into a structured list of dicts.
-    Each entry is of the form:
-        {
-          'interface': 'Interface: 192.168.1.10 --- 0x13',
-          'ip': '192.168.1.1',
-          'mac': '58-11-22-e0-67-4f' or '58:11:22:e0:67:4f',
-          'line': 'Raw line from arp -a'
-        }
+    Parse the ARP table output from 'arp -a' and extract IP and MAC addresses.
+    Returns a list of dictionaries containing the IP, MAC, and Type.
     """
-    lines = arp_output.splitlines()
-    entries = []
-    current_interface = None
-
+    lines = output.splitlines()
+    arp_entries = []
+    
     for line in lines:
         line = line.strip()
-        if line.startswith("Interface:"):
-            # Windows ARP often shows lines like: "Interface: 192.168.1.10 --- 0x13"
-            current_interface = line
+        
+        # Skip headers and empty lines
+        if line.startswith("Interface:") or line.startswith("Internet Address") or line == "":
             continue
+        
+        # Parse the ARP entry
+        ip_match = re.search(r"(\d+\.\d+\.\d+\.\d+)", line)
+        mac_match = re.search(r"([0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2})", line, re.IGNORECASE)
+        type_match = re.search(r"(static|dynamic)", line)
+        
+        if ip_match and mac_match:
+            ip_addr = ip_match.group(1)
+            if ip_addr.startswith(subnet_prefix):
+                arp_entries.append({
+                    "ip": ip_addr,
+                    "mac": mac_match.group(1).replace(":", "-").lower(),
+                    "type": type_match.group(1) if type_match else "unknown"
+                })
+    
+    return arp_entries
 
-        # Skip headers or blank lines
-        if line.startswith("Internet Address") or not line:
-            continue
-
-        # Two common ARP output formats:
-
-        # 1) Windows format:
-        #    192.168.1.10       00-50-56-c0-00-08     dynamic
-        win_match = re.match(r"^(\d+\.\d+\.\d+\.\d+)\s+([\da-fA-F:-]+)\s+(\w+)", line)
-
-        # 2) Linux/macOS format:
-        #    ? (192.168.1.1) at 58:11:22:e0:67:4f [ether] on eth0
-        #    or "192.168.1.1 dev eth0 lladdr 58:11:22:e0:67:4f STALE" on some systems
-        #    We'll try a simple pattern for the typical "at" style.
-        nix_match = re.match(r"^\S+\s+\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F:]+)", line)
-
-        if win_match:
-            ip_addr = win_match.group(1)
-            mac_addr = win_match.group(2)
-            entries.append({
-                'interface': current_interface,
-                'ip': ip_addr,
-                'mac': mac_addr,
-                'line': line
-            })
-        elif nix_match:
-            ip_addr = nix_match.group(1)
-            mac_addr = nix_match.group(2)
-            entries.append({
-                'interface': current_interface,
-                'ip': ip_addr,
-                'mac': mac_addr,
-                'line': line
-            })
-
-    return entries
-
-def filter_by_subnet(entries, subnet_prefix):
+def detect_arp_spoofing(arp_entries):
     """
-    Filter the parsed ARP entries so we only keep those where the IP starts with SUBNET_PREFIX.
-    Returns a dictionary grouped by interface, e.g.:
-      {
-        'Interface: 192.168.1.10 --- 0x13': [
-            { 'ip': '192.168.1.2', 'mac': '00-50-56-c0-00-08', ... },
-            ...
-        ],
-        ...
-      }
+    Detect potential ARP spoofing by finding duplicate MAC addresses.
+    Returns a dictionary of MAC addresses with their associated IPs.
     """
-    grouped = {}
-    for entry in entries:
-        ip_addr = entry['ip']
-        if ip_addr.startswith(subnet_prefix):
-            iface = entry['interface']
-            if iface not in grouped:
-                grouped[iface] = []
-            grouped[iface].append(entry)
-    return grouped
+    mac_to_ips = {}
+    for entry in arp_entries:
+        mac = entry["mac"]
+        ip = entry["ip"]
+        
+        if mac in mac_to_ips:
+            mac_to_ips[mac].append(ip)
+        else:
+            mac_to_ips[mac] = [ip]
+    
+    # Filter for MAC addresses that are associated with more than one IP
+    suspicious_macs = {mac: ips for mac, ips in mac_to_ips.items() if len(ips) > 1 and "255" not in ips[0]}
+    
+    return suspicious_macs
 
-def check_arp_spoofing(entries, gateway_ip):
+def format_arp_table(arp_entries):
     """
-    Check if any IP other than `gateway_ip` has the same MAC as `gateway_ip`.
-    Return True if spoofing is detected, False otherwise.
+    Format the ARP table entries into a readable string table.
     """
-    # Build a map of IP -> MAC
-    ip_mac = { e['ip']: e['mac'].lower() for e in entries }
-    if gateway_ip in ip_mac:
-        gateway_mac = ip_mac[gateway_ip]
-        # Compare every other IP's MAC
-        for ip, mac in ip_mac.items():
-            if ip != gateway_ip and mac == gateway_mac:
-                return True
-    return False
-
-def format_arp_output(grouped_entries):
-    """
-    Format the ARP entries grouped by interface into a multiline string
-    that can be placed inside a Discord code block.
-    """
-    lines = []
-    for iface, entries in grouped_entries.items():
-        if not entries:
-            continue
-        # Only show the interface line if it actually has entries in the desired subnet
-        lines.append(iface)
-        for e in entries:
-            lines.append(e['line'])
-    return "\n".join(lines)
+    if not arp_entries:
+        return "No ARP entries found for subnet 192.168.1.0/24."
+    
+    table = "IP Address      MAC Address           Type\n"
+    table += "--------------------------------------------------\n"
+    
+    for entry in arp_entries:
+        table += f"{entry['ip']:<15} {entry['mac']:<20} {entry['type']}\n"
+    
+    return table
 
 def send_discord_notification(message):
     """
@@ -140,45 +94,60 @@ def send_discord_notification(message):
         response = requests.post(WEBHOOK_URL, json=payload)
         if response.status_code not in [200, 204]:
             print(f"Failed to send notification: {response.status_code} - {response.text}")
+        else:
+            print("Successfully sent notification to Discord.")
     except Exception as e:
         print(f"Error sending Discord notification: {e}")
 
 def main():
     while True:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         arp_output = get_arp_table()
-        if not arp_output:
-            print("Failed to retrieve ARP table.")
-        else:
-            # Parse all ARP entries
-            entries = parse_arp_entries(arp_output)
-            # Filter for 192.168.1.x only
-            grouped = filter_by_subnet(entries, SUBNET_PREFIX)
-
-            # Flatten filtered entries to check for spoofing
-            all_filtered = []
-            for e_list in grouped.values():
-                all_filtered.extend(e_list)
-
-            # Check for ARP spoofing
-            spoofing_detected = check_arp_spoofing(all_filtered, GATEWAY_IP)
-
-            # Build the output message
-            formatted_output = format_arp_output(grouped)
-            if not formatted_output.strip():
-                message = f"No ARP entries found for subnet {SUBNET_PREFIX}0/24."
+        
+        if arp_output:
+            arp_entries = parse_arp_table(arp_output)
+            formatted_table = format_arp_table(arp_entries)
+            suspicious_macs = detect_arp_spoofing(arp_entries)
+            
+            if suspicious_macs:
+                # Format the alert for potential ARP spoofing
+                for mac, ips in suspicious_macs.items():
+                    # Find the gateway IP (assuming it's x.x.x.1)
+                    gateway_ip = next((ip for ip in ips if ip.endswith(".1")), None)
+                    if gateway_ip:
+                        other_ips = [ip for ip in ips if ip != gateway_ip]
+                        alert_message = (
+                            f"**🚨ALERT: ARP SPOOFING DETECTED!**\n"
+                            f"Suspicious IPs sharing gateway MAC: {', '.join(other_ips)}\n"
+                            f"Gateway IP: {gateway_ip}\n"
+                            f"Timestamp: {timestamp}\n"
+                            f"**ARP Table:**\n\n```\n{formatted_table}```"
+                        )
+                        send_discord_notification(alert_message)
+                    else:
+                        alert_message = (
+                            f"**🚨ALERT: Potential ARP SPOOFING DETECTED!**\n"
+                            f"Multiple IPs sharing MAC address {mac}: {', '.join(ips)}\n"
+                            f"Timestamp: {timestamp}\n"
+                            f"**ARP Table:**\n\n```\n{formatted_table}```"
+                        )
+                        send_discord_notification(alert_message)
             else:
-                message = f"📋 **ARP Table ({SUBNET_PREFIX}0/24):**\n```{formatted_output}```"
-
-            if spoofing_detected:
-                message += "\n\n**🔔ALERT: Possible ARP spoofing detected!** " \
-                           "Another IP shares the same MAC as the gateway."
-
-            # Send to Discord
-            send_discord_notification(message)
-            print("Sent ARP table to Discord.")
-
-        print(f"Waiting {SCAN_INTERVAL} seconds before next scan...\n")
-        time.sleep(SCAN_INTERVAL)
+                # Normal update
+                update_message = (
+                    f"**🔍Network Monitor Update**\n"
+                    f"Scan completed at: {timestamp}\n"
+                    f"Devices detected: {len(arp_entries)}\n"
+                    f"Status: Normal - No spoofing detected\n"
+                    f"**ARP Table:**\n\n```\n{formatted_table}```"
+                )
+                send_discord_notification(update_message)
+        else:
+            print("Failed to retrieve ARP table.")
+                
+        print(f"Scan completed at {timestamp}. Waiting 60 seconds before next scan...\n")
+        time.sleep(60)
 
 if __name__ == "__main__":
+    print("ARP Spoofing Detector started. Monitoring network...")
     main()
